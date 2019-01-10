@@ -1,6 +1,10 @@
-package cse.uta.edu;
+package cse.uta.edu.IPSO;
+
+import org.apache.log4j.Logger;
 
 public class StageMetrics {
+	private static final Logger LOG = Logger.getLogger(StageMetrics.class);
+
 	// ================================
 	// Fields
 	// ================================
@@ -61,7 +65,7 @@ public class StageMetrics {
 	 * @return
 	 */
 	public void stageInfo() {
-		System.out.println(this.id + " | "
+		LOG.info(this.id + " | "
 				+ this.getStageName() + " | "
 				+ this.getNumbOfTasks() + " | "
 				+ this.getSubmissionTime() + " | "
@@ -79,7 +83,7 @@ public class StageMetrics {
 	 */
 	public void stageInfoSignificant() {
 		if(this.duration() > 0.5 )
-			System.out.println(this.id + " | "
+			LOG.info(this.id + " | "
 					+ this.getNumbOfTasks() + " | "
 					+ this.getSubmissionTime() + " | "
 					+ this.getCompletionTime() + " | "

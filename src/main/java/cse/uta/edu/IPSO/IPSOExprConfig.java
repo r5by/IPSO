@@ -1,4 +1,4 @@
-package cse.uta.edu;
+package cse.uta.edu.IPSO;
 
 public class IPSOExprConfig {
 	public static IPSOExprConfig ipsoExprConfig = null;

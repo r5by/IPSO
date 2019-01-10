@@ -1,7 +1,8 @@
-package cse.uta.edu;
+package cse.uta.edu.IPSO;
+
+import cse.uta.edu.Utils.Util;
 
 import java.util.ArrayList;
-import java.util.EmptyStackException;
 
 import javax.naming.directory.InvalidAttributesException;
 
@@ -58,8 +59,9 @@ public class IPSOStage {
 	public String getStageName() {
 		return stageInfo.getStageName();
 	}
-	
-	
+
+	/** Return a unique key to retrieve the current stage from cache */
+	public String getStageKey() { return Util.formStageKey(getStageName()); }
 	
 	/**
 	 * Return duration of stage
