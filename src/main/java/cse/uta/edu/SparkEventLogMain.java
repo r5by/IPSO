@@ -91,6 +91,14 @@ public class SparkEventLogMain {
 				String[] pairs = list.get(i).split("\t");
 				interpreter.analyzeLogsForExprSets(Integer.valueOf(pairs[0]), Integer.valueOf(pairs[1]));
 			}
+
+			//second iteration output IPSO info
+			if(interpreter.isIPSO()) {
+                for(int j = 0; j < list.size(); j++){
+                    String[] pairs = list.get(j).split("\t");
+                    interpreter.ipsoOutput(Integer.valueOf(pairs[0]), Integer.valueOf(pairs[1]));
+                }
+            }
 		}
 		else// single use processing the log for one specific experiment set (N, m)
             LOG.info("Batch job process disabled, analyzing Spark log files passed by the single directory.");

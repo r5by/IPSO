@@ -61,7 +61,7 @@ public class StageMetrics {
 	 * 
 	 * StageID | numberOfTasks | Duration(s) | Deserialization Time(ms) | Computing Time(ms) | GC Time (ms)
 	 * 
-	 * copy and past this out in execel for later processing.
+	 * copy and past this out to excel for later processing.
 	 * @return
 	 */
 	public void stageInfo() {

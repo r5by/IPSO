@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -33,15 +34,15 @@ public class SparkEventLogInterpreter {
     private String batchConfigPath;
 
     /* File import TAGS*/
-//    private int N;
-//    private int m;
     private String logRootPath;
-//    private String logPath;
     private String outputPath;
 
     /* For IPSO analysis , "stage name" -> "stage information" */
     //TODO: The index in this map can be used to form the real execution longest path
     private static HashMap<Long, IPSOStage> stages = new HashMap();
+
+    /* IPSO cache , "(N,m) pair" -> "stages information" */
+    private static HashMap<IPSOkey, HashMap<Long, IPSOStage>> ipsoCache = new HashMap<>();
 
     /* print out stage*/
     private boolean showStageInfo;
@@ -60,6 +61,11 @@ public class SparkEventLogInterpreter {
     private long appFinishTimeMS;
     private long firstStageLaunchTimeMS;
 
+    /* If isBatch is off, the experiment configuration N/m must be obtained from configuration file */
+    private int N;
+    private int m;
+    private static final int DEFAULT_N_M = -1;
+
     public void init(Configuration conf) {
         showStageInfo = conf.getBoolean(IPSOConfig.SHOW_STAGE_INFO, false);
         showTasksInfo = conf.getBoolean(IPSOConfig.SHOW_TASKS_INFO, false);
@@ -73,9 +79,8 @@ public class SparkEventLogInterpreter {
 //        logPath = conf.getString(IPSOConfig.LOG_DIR_FIXED_SIZE);
         outputPath = conf.getString(IPSOConfig.OUTPUT_DIR);
 
-        //todo: set N, m from configuration file
-//        N = 4;
-//        m = 2;
+        N = conf.getInt(IPSOConfig.EXPR_CONF_N, DEFAULT_N_M);
+        m = conf.getInt(IPSOConfig.EXPR_CONF_M, DEFAULT_N_M);
 
         appLaunchTimeMS = 0;
         appFinishTimeMS = 0;
@@ -84,8 +89,14 @@ public class SparkEventLogInterpreter {
 
     public String getBatchConfigPath() {return this.batchConfigPath;}
     public boolean isBatch() { return this.isBatch; }
+    public boolean isIPSO() { return this.ipsoAnalysis; }
 
     public void analyzeLogsForExprSets() {
+        if(N == DEFAULT_N_M || m == DEFAULT_N_M)
+            LOG.error("Experiment N (Data scale) and m (parallel degree) must be set in configuration file!");
+
+        IPSOExprConfig.getInstance().setNP(N);
+        IPSOExprConfig.getInstance().setMP(m);
         analyzeLogsInPath(Paths.get(this.logRootPath));
     }
     private void analyzeLogsInPath(Path source) {
@@ -211,34 +222,41 @@ public class SparkEventLogInterpreter {
 //															+ " | " + v.IPSO().wp()
 //															+ " | " + v.IPSO().ws()
 //															+ " | " + v.IPSO().wo()));
-            //TODO: finish the NTYPE stage analysis and output to files based on its stage name
-            stages.forEach((k, v) -> output(k, v));
-        }
 
+            //First iteration find the experiment set with N=m=1 to pin-point stage tags in single-processor expr;
+            if(!AppStageTag.getInstance().isReady())
+            {
+                AppStageTag.getInstance().put(stages);
+            }
+
+            //Cache the stage info for IPSO analysis in second iteration
+            ipsoCache.put(new IPSOkey(IPSOExprConfig.getInstance().NP(), IPSOExprConfig.getInstance().MP()), new HashMap<>(stages));
+        }
     }
 
-    /**
-     * MILESTONE (1): Analysis NTYPE stages
-     * @param stageID
-     * @param stage
-     */
-    public void output(Long stageID, IPSOStage stage) {
+    public void ipsoOutput(int N, int m) {
+        IPSOkey key = new IPSOkey(N, m);
+        stages = ipsoCache.get(key);
+        stages.forEach((k, v) -> output(k, v, N, m));
+    }
+
+    private void output(Long stageID, IPSOStage stage, int N, int m) {
+        //Before output firstly check whether the stages are all tagged
+        if(!AppStageTag.getInstance().isReady())
+            LOG.error("Missing Spark application profiles: IPSO requires more experiments to start-up its analysis!");
+
         //TITLE: N | m | stageName | wp | ws | wo
         String outString = "";
 
         try {
-            if(stage.stageType() == IPSOStageTypes.NTYPE) {
                 Path fpath=Paths.get(Util.getIpsoOutputPath(outputPath, stage.getStageName()));
-
-                //Create file
                 if(!Files.exists(fpath)) {
                     Files.createFile(fpath);
                     outString += "N | m | duration(ms) | stageName | wp | ws | wo\n";
                 }
 
                 outString +=
-                        IPSOExprConfig.getInstance().NP() + " | " +
-                                IPSOExprConfig.getInstance().MP() + " | " +
+                        N + " | " + m + " | " +
                                 stage.getDurationInMS() + " | " +
                                 stage.getStageName() + " | " +
                                 stage.IPSO().wp() + " | " +
@@ -250,7 +268,6 @@ public class SparkEventLogInterpreter {
                 bfw.write(outString);
                 bfw.flush();
                 bfw.close();
-            }
 
         } catch (IOException e) {
             e.printStackTrace();
@@ -408,5 +425,34 @@ public class SparkEventLogInterpreter {
         }
 
         return comptL;
+    }
+
+    private class IPSOkey {
+        int N;
+        int m;
+
+        IPSOkey(int pN, int pm) {
+             N = pN;
+             m = pm;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if(this == o) return true;
+            if(o == null || getClass() != o.getClass()) return false;
+            IPSOkey key = (IPSOkey) o;
+            if(N != key.N) return false;
+            if(m != key.m) return false;
+            return true;
+        }
+
+        @Override
+        public int hashCode() {
+            final int prime = 31;
+            int result = 1;
+            result = result * prime + N;
+            result = result * prime + m;
+            return result;
+        }
     }
 }

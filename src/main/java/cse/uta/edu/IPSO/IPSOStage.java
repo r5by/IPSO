@@ -1,6 +1,7 @@
 package cse.uta.edu.IPSO;
 
 import cse.uta.edu.Utils.Util;
+import org.apache.log4j.Logger;
 
 import java.util.ArrayList;
 
@@ -12,6 +13,7 @@ import javax.naming.directory.InvalidAttributesException;
  *
  */
 public class IPSOStage {
+	private static final Logger LOG = Logger.getLogger(IPSOStage.class);
 	//===============================
 	//      Fileds
 	//================================
@@ -35,23 +37,11 @@ public class IPSOStage {
 	//================================
 	public IPSOStage(long id) {
 		this.id = id;
-	}
+	} //NOTE: id for a stage is only used locally
 	
 	//===============================
 	//       Interfaces
 	//================================
-	/**
-	 * Return the ipso-related calculation results
-	 * @return
-	 */
-	public synchronized IPSO IPSO() {
-		if(ipso == null) {
-			ipso = new IPSO();
-			ipso.calc();
-		}
-		return ipso;
-	}
-	
 	/**
 	 * Return stage name
 	 * @return
@@ -97,104 +87,116 @@ public class IPSOStage {
 		long MP = IPSOExprConfig.getInstance().MP();
 		
 		if( NP == 1 || NP == MP)
-			type = IPSOStageTypes.UNKNOWN;
+			type = IPSOStageTypes.UNSET;
 		else {
 			if(numOfTasks == NP )
 				type = IPSOStageTypes.NTYPE;
-		else if(numOfTasks == MP)
+			else if(numOfTasks == 1)
+				type = IPSOStageTypes.STYPE;
+			else
 				type = IPSOStageTypes.MTYPE;
-		else if(numOfTasks == MP - 1)
-				type = IPSOStageTypes.MMINUSONETYPE;
-		else 
-				type = IPSOStageTypes.UNKNOWN;
 		}
 		
 		return type;
 	}
-	
+
+	/**
+	 * Return the ipso-related calculation results
+	 * @return
+	 */
+	public synchronized IPSO IPSO() {
+		if(ipso == null) {
+			ipso = new IPSO();
+			ipso.init();
+		}
+		return ipso;
+	}
 	
 	//===============================
 	//       Privates
 	//================================
 	protected class IPSO {
 		
-		/* IPSO scaling factors */
-		double wp;
-		double ws;
-		double wo;
-		
-		void calc() {
-			switch (type) {
-			case NTYPE:
-				/*when number of tasks in stage is equal to N*/
-				
-				//hold the first task in executor ID n (count from 1) in the array index of n-1
-				long[] firstTaskInExecutorRunTimeArry = new long[IPSOExprConfig.getInstance().MP()];
-				for(TaskMetricsInStage task : taskInfo) {
-					int executorID = (int) task.getExecutorID();
-					long taskExecutorRunTime = task.getExecutorDeserializeTime();
-					
-					//If the array isnot filled or it's not the largest, we will fill it with the task's executorRunTime (ms)
-					//NOTE: Here we assume the longest task is always the executor's first task
-					if(firstTaskInExecutorRunTimeArry[executorID - 1] == 0
-							|| firstTaskInExecutorRunTimeArry[executorID -1] < taskExecutorRunTime )
-						firstTaskInExecutorRunTimeArry[executorID - 1] = task.getExecutorRunTime();
-					
-					long sumOfFirstTaskInExecutorRunTime = 0;
-					for(int i = 0; i < firstTaskInExecutorRunTimeArry.length; i++)
-						sumOfFirstTaskInExecutorRunTime += firstTaskInExecutorRunTimeArry[i];
-					
-					//Formula: WP(N,m) = Sigma.ExecRunTime / (N- m) * N
-					wp = ((double) (getExecutorRunTimeInMS() - sumOfFirstTaskInExecutorRunTime))  /
-							((double) (IPSOExprConfig.getInstance().NP() - IPSOExprConfig.getInstance().MP())) * 
-							((double) IPSOExprConfig.getInstance().NP());
-					
-					//Formula: Ws(N,m) = Ws(N, 1) = stageDuration - Wp(N,1)
-					//NOTE: Only applicable if m = 1
-					if(IPSOExprConfig.getInstance().MP() == 1)
-						ws = (double) getDurationInMS() - wp;
-					else
-						ws = -1;
-					
-					//Formula: Wo(N,m) = stageDuration(N,m) - Ws(N,1) - Wp(N,1)/m
-					//NOTE: Wo can only be calculated when m =1 (it's 0) otherwise it has to be based on previous experiments
-					if(IPSOExprConfig.getInstance().MP() == 1)
-						wo = 0;
-					else
-						wo = -1;
+		/* IPSO scaling factors, in unit of milliseconds */
+		long wp = 0;
+		long ws = 0;
+		long wo = 0;
+
+		/**
+		 * Called only after all stages are properly tagged
+		 */
+		void init() {
+			if (AppStageTag.getInstance().isWoStage(getStageKey())) {
+				wo += stageInfo.durationMS();
+			} else {
+				LOG.debug("Getting IPSO stage type informatino for stage: " + getStageKey());
+				switch (AppStageTag.getInstance().get(getStageKey())) {
+					case NTYPE:
+						/*when number of tasks in stage is equal to N*/
+						wp = stageInfo.durationMS();
+						LOG.debug("The stage: " + getStageKey() + " is IPSO_N Type: Wp +=" + wp + " (ms)");
+
+						//TODO: Improve to the task-level granularity implementation in future release
+//				//hold the first task in executor ID n (count from 1) in the array index of n-1
+//				long[] firstTaskInExecutorRunTimeArry = new long[IPSOExprConfig.getInstance().MP()];
+//				for(TaskMetricsInStage task : taskInfo) {
+//					int executorID = (int) task.getExecutorID();
+//					long taskExecutorRunTime = task.getExecutorDeserializeTime();
+//
+//					//If the array isnot filled or it's not the largest, we will fill it with the task's executorRunTime (ms)
+//					//NOTE: Here we assume the longest task is always the executor's first task
+//					if(firstTaskInExecutorRunTimeArry[executorID - 1] == 0
+//							|| firstTaskInExecutorRunTimeArry[executorID -1] < taskExecutorRunTime )
+//						firstTaskInExecutorRunTimeArry[executorID - 1] = task.getExecutorRunTime();
+//
+//					long sumOfFirstTaskInExecutorRunTime = 0;
+//					for(int i = 0; i < firstTaskInExecutorRunTimeArry.length; i++)
+//						sumOfFirstTaskInExecutorRunTime += firstTaskInExecutorRunTimeArry[i];
+//
+//					//Formula: WP(N,m) = Sigma.ExecRunTime / (N- m) * N
+//					wp = ((double) (getExecutorRunTimeInMS() - sumOfFirstTaskInExecutorRunTime))  /
+//							((double) (IPSOExprConfig.getInstance().NP() - IPSOExprConfig.getInstance().MP())) *
+//							((double) IPSOExprConfig.getInstance().NP());
+//
+//					//Formula: Ws(N,m) = Ws(N, 1) = stageDuration - Wp(N,1)
+//					//NOTE: Only applicable if m = 1
+//					if(IPSOExprConfig.getInstance().MP() == 1)
+//						ws = (double) getDurationInMS() - wp;
+//					else
+//						ws = -1;
+//
+//					//Formula: Wo(N,m) = stageDuration(N,m) - Ws(N,1) - Wp(N,1)/m
+//					//NOTE: Wo can only be calculated when m =1 (it's 0) otherwise it has to be based on previous experiments
+//					if(IPSOExprConfig.getInstance().MP() == 1)
+//						wo = 0;
+//					else
+//						wo = -1;
+//				}
+
+						break;
+					case MTYPE:
+						//When number of tasks are related to available executors
+						if(IPSOExprConfig.getInstance().MP() == 1) { //If m=1, Wo is always 0.
+							wo = 0;
+							wp = stageInfo.durationMS();
+						} else {
+							wp = stageInfo.getComputingTime();
+							wo = stageInfo.durationMS() - wp/IPSOExprConfig.getInstance().MP();
+						}
+						LOG.debug("The stage: " + getStageKey() + " is IPSO_M type: Wo += " + wo + "(ms); Wp += " + wp + "(ms)");
+
+						break;
+					case STYPE:
+						// when number of tasks in stage is equal to 1
+						ws = stageInfo.durationMS();
+						LOG.debug("The stage: " + getStageKey() + " is IPSO_S Type: Ws += " + ws + "(ms)");
+
+						break;
+					case UNSET:
+						LOG.error("Unexpected IPSO type unset error...");
+						break;
 				}
-				
-				break;
-			case MTYPE:
-				//when number of tasks in stage is equal to m
-				wp = (double) getExecutorRunTimeInMS();
-				
-				if(IPSOExprConfig.getInstance().MP() == 1) {
-					ws = (double) getDurationInMS() - wp;
-					wo = 0;
-				}
-				else {
-					ws = -1;
-					wo = -1;
-				}
-				break;
-				
-			case MMINUSONETYPE:
-				// when number of tasks in stage is equal to m-1
-				ws = 0;
-				wp = 0;
-				wo = (double) getDurationInMS();
-				
-				break;
-			case UNKNOWN:
-				// unknow types 
-				
-				break;
-			default://types unset yet
-				System.err.println("Stage type is unset yet!");
-				break;
 			}
-			
 		}
 		
 		public double wp() {

@@ -32,4 +32,8 @@ public class IPSOConfig {
     public final static String OUTPUT_DIR = "output.dir";
     /* Configuration file path of using IPSO batch job processing function */
     public final static String BATCH_CONF_PATH = "batch.conf.path";
+
+    /* If isBatch is off, expr N/m values need to be passed by the configuration file*/
+    public final static String EXPR_CONF_N = "expr.conf.N";
+    public final static String EXPR_CONF_M = "expr.conf.m";
 }
