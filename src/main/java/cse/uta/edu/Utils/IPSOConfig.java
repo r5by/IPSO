@@ -26,8 +26,12 @@ public class IPSOConfig {
     public final static String QUICK_ANALYSIS = "quick.analysis";
     public final static String BATCH_PROC = "batch.process";
 
-    /** Write IPSO related performance metrics */
+    /* Write out IPSO related performance metrics */
     public final static String IPSO_ANALYSIS = "ipso.analysis";
+    /* Write out IPSO scaling factors*/
+    public final static String IPSO_ANALYSIS_SCALING_FACTORS = "ipso.analysis.scaling.factors";
+    /* Write out IPSO speedups v.s. actual system speedups*/
+    public final static String IPSO_ANALYSIS_SPEEDUP = "ipso.analysis.speedup";
     /* An output directory to write out results, if show.ipso flag is set true */
     public final static String OUTPUT_DIR = "output.dir";
     /* Configuration file path of using IPSO batch job processing function */

@@ -1,5 +1,8 @@
 package cse.uta.edu.IPSO;
 
+import com.google.common.primitives.Doubles;
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import cse.uta.edu.Utils.IPSOConfig;
@@ -8,6 +11,14 @@ import cse.uta.edu.Utils.Util;
 import cse.uta.edu.model.*;
 import org.apache.commons.configuration.Configuration;
 import org.apache.log4j.Logger;
+import tech.tablesaw.api.*;
+import tech.tablesaw.columns.Column;
+import tech.tablesaw.plotly.Plot;
+import tech.tablesaw.plotly.api.Scatter3DPlot;
+import tech.tablesaw.plotly.components.Figure;
+import tech.tablesaw.plotly.components.Layout;
+import tech.tablesaw.plotly.traces.Scatter3DTrace;
+import tech.tablesaw.plotly.traces.Trace;
 
 import javax.naming.directory.InvalidAttributesException;
 import java.io.BufferedWriter;
@@ -18,7 +29,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -37,12 +47,25 @@ public class SparkEventLogInterpreter {
     private String logRootPath;
     private String outputPath;
 
-    /* For IPSO analysis , "stage name" -> "stage information" */
+    /* For IPSO analysis , "stage id" -> "stage information" */
     //TODO: The index in this map can be used to form the real execution longest path
     private static HashMap<Long, IPSOStage> stages = new HashMap();
 
     /* IPSO cache , "(N,m) pair" -> "stages information" */
-    private static HashMap<IPSOkey, HashMap<Long, IPSOStage>> ipsoCache = new HashMap<>();
+    private static HashMap<IPSOExprID, HashMap<Long, IPSOStage>> ipsoStagesHM = new HashMap<>();
+    private static HashMap<IPSOExprID, Long> ipsoDurationHM = new HashMap<IPSOExprID, Long>();
+    private static HashMap<IPSOExprID, Long> ipsoOverheadHM = new HashMap<IPSOExprID, Long>();
+
+    /* IPSO Speedup */
+    private ArrayList<Integer> NArray;
+    private ArrayList<Integer> mArray;
+    private ArrayList<Double> latencyExprArray;
+    private ArrayList<Double> latencyIPSOArray;
+    private ArrayList<Long> wpArray;
+    private ArrayList<Long> wsArray;
+    private ArrayList<Long> woArray;
+    private ArrayList<Double> speedupExprArray;
+    private ArrayList<Double> speedupIPSOArray;
 
     /* print out stage*/
     private boolean showStageInfo;
@@ -52,6 +75,10 @@ public class SparkEventLogInterpreter {
 
     /* Write out stage info for IPSO model analysis */
     private boolean ipsoAnalysis;
+    /* Scaling factors: Wp, Ws, Wo */
+    private boolean ipsoAnalysisScalingFactors;
+    /* Write out speedups */
+    private boolean ipsoAnalysisSpeedup;
 
     /* use the first log file in the log event directory to speedup IPSO analysis */
     private boolean quickAnalysis;
@@ -60,6 +87,9 @@ public class SparkEventLogInterpreter {
     private long appLaunchTimeMS;
     private long appFinishTimeMS;
     private long firstStageLaunchTimeMS;
+    /* baseline: the latency and ipso-speedup of the first profile will be used as baseline to compare the system speedups (for fixed-time) */
+    private double baseLatencyMS;
+    private double baseLatencyIPSOMS;
 
     /* If isBatch is off, the experiment configuration N/m must be obtained from configuration file */
     private int N;
@@ -67,34 +97,53 @@ public class SparkEventLogInterpreter {
     private static final int DEFAULT_N_M = -1;
 
     public void init(Configuration conf) {
-        showStageInfo = conf.getBoolean(IPSOConfig.SHOW_STAGE_INFO, false);
-        showTasksInfo = conf.getBoolean(IPSOConfig.SHOW_TASKS_INFO, false);
+        /* IPSO-realted */
         ipsoAnalysis = conf.getBoolean(IPSOConfig.IPSO_ANALYSIS, false);
-        quickAnalysis = conf.getBoolean(IPSOConfig.QUICK_ANALYSIS, true);
+        ipsoAnalysisScalingFactors = conf.getBoolean(IPSOConfig.IPSO_ANALYSIS_SCALING_FACTORS, false);
+        ipsoAnalysisSpeedup = conf.getBoolean(IPSOConfig.IPSO_ANALYSIS_SPEEDUP, false);
 
         isBatch = conf.getBoolean(IPSOConfig.BATCH_PROC, false);
         batchConfigPath = conf.getString(IPSOConfig.BATCH_CONF_PATH);
 
+        /* Tunes */
+        showStageInfo = conf.getBoolean(IPSOConfig.SHOW_STAGE_INFO, false);
+        showTasksInfo = conf.getBoolean(IPSOConfig.SHOW_TASKS_INFO, false);
+        quickAnalysis = conf.getBoolean(IPSOConfig.QUICK_ANALYSIS, true);
+
+        /* Paths */
         logRootPath = conf.getString(IPSOConfig.LOG_ROOT_DIR);
-//        logPath = conf.getString(IPSOConfig.LOG_DIR_FIXED_SIZE);
         outputPath = conf.getString(IPSOConfig.OUTPUT_DIR);
 
+        /* Others */
         N = conf.getInt(IPSOConfig.EXPR_CONF_N, DEFAULT_N_M);
         m = conf.getInt(IPSOConfig.EXPR_CONF_M, DEFAULT_N_M);
 
         appLaunchTimeMS = 0;
         appFinishTimeMS = 0;
         firstStageLaunchTimeMS = 0;
+        baseLatencyMS = -1;
+        baseLatencyIPSOMS = -1;
+
+        if(ipsoAnalysisSpeedup) {
+            NArray = new ArrayList<>();
+            mArray = new ArrayList<>();
+            latencyExprArray = new ArrayList<>();
+            latencyIPSOArray = new ArrayList<>();
+            wpArray = new ArrayList<>();
+            wsArray = new ArrayList<>();
+            woArray = new ArrayList<>();
+            speedupExprArray = new ArrayList<>();
+            speedupIPSOArray = new ArrayList<>();
+        }
     }
 
     public String getBatchConfigPath() {return this.batchConfigPath;}
     public boolean isBatch() { return this.isBatch; }
     public boolean isIPSO() { return this.ipsoAnalysis; }
+    public boolean onSpeedup() { return this.ipsoAnalysisSpeedup; }
+    public boolean onScalingFactors() {return this.ipsoAnalysisScalingFactors; }
 
     public void analyzeLogsForExprSets() {
-        if(N == DEFAULT_N_M || m == DEFAULT_N_M)
-            LOG.error("Experiment N (Data scale) and m (parallel degree) must be set in configuration file!");
-
         IPSOExprConfig.getInstance().setNP(N);
         IPSOExprConfig.getInstance().setMP(m);
         analyzeLogsInPath(Paths.get(this.logRootPath));
@@ -168,8 +217,8 @@ public class SparkEventLogInterpreter {
             logList.forEach(line -> parseJSONLog(line));
 
             /* app execution duration in seconds. */
-            long latency = appFinishTimeMS - appLaunchTimeMS;
-            LOG.info("Applicatoin execution duration (ms) | " + latency);
+            long duration = appFinishTimeMS - appLaunchTimeMS;
+            LOG.info("Applicatoin execution duration (ms) | " + duration);
 
             /* app execution overhead (time spent between app_launch time and first_stage_launch time */
             long overhead = firstStageLaunchTimeMS - appLaunchTimeMS;
@@ -204,7 +253,9 @@ public class SparkEventLogInterpreter {
         if(ipsoAnalysis) {
             try (Stream<String> stream = Files.lines(path)) {
                 logList = stream.filter(line -> line.contains("SparkListenerStageCompleted")
-                        || line.contains("SparkListenerTaskEnd"))
+                        || line.contains("SparkListenerTaskEnd")
+                        || line.contains("SparkListenerApplicationEnd")
+                        || line.contains("SparkListenerApplicationStart"))
                         .map(String::trim).collect(Collectors.toList());
             } catch (IOException e1) {
                 e1.printStackTrace();
@@ -214,14 +265,7 @@ public class SparkEventLogInterpreter {
 
             /* Process IPSO Analysis */
             if(stages.isEmpty())
-                System.err.println("Requires Spark log files for IPSO performance analysis!");
-
-            //Title
-//			LOG.debug(" stageID | type | wp | ws | wo");
-//			stages.forEach((k, v) -> LOG.debug(k+ " | " + v.getStageName() + " | " + v.stageType()
-//															+ " | " + v.IPSO().wp()
-//															+ " | " + v.IPSO().ws()
-//															+ " | " + v.IPSO().wo()));
+                LOG.error("Requires Spark log files for IPSO performance analysis!");
 
             //First iteration find the experiment set with N=m=1 to pin-point stage tags in single-processor expr;
             if(!AppStageTag.getInstance().isReady())
@@ -229,39 +273,132 @@ public class SparkEventLogInterpreter {
                 AppStageTag.getInstance().put(stages);
             }
 
+            IPSOExprID key = new IPSOExprID(IPSOExprConfig.getInstance().NP(), IPSOExprConfig.getInstance().MP());
+
+            if (onSpeedup()) {
+                long duration = appFinishTimeMS - appLaunchTimeMS;
+                long overhead = firstStageLaunchTimeMS - appLaunchTimeMS;
+                LOG.debug("(" + IPSOExprConfig.getInstance().NP() + " , " + IPSOExprConfig.getInstance().MP() + ") duration: " + duration + ", overhead: " + overhead);
+                ipsoDurationHM.put(key, duration);
+                ipsoOverheadHM.put(key, overhead);
+            }
+
             //Cache the stage info for IPSO analysis in second iteration
-            ipsoCache.put(new IPSOkey(IPSOExprConfig.getInstance().NP(), IPSOExprConfig.getInstance().MP()), new HashMap<>(stages));
+            ipsoStagesHM.put(key, new HashMap<>(stages));
         }
     }
 
-    public void ipsoOutput(int N, int m) {
-        IPSOkey key = new IPSOkey(N, m);
-        stages = ipsoCache.get(key);
-        stages.forEach((k, v) -> output(k, v, N, m));
+    public void outputIPSO() {
+        try {
+            Table ipsoSpeedupTable = Table.create("IPSOSpeedupAnalysisTable")
+                    .addColumns(
+                            IntColumn.create("N", Ints.toArray(NArray)),
+                            IntColumn.create("m", Ints.toArray(mArray)),
+                            DoubleColumn.create("L_expr (ms)", Doubles.toArray(latencyExprArray)),
+                            DoubleColumn.create("L_ipso (ms)", Doubles.toArray(latencyIPSOArray)),
+                            LongColumn.create("External Scaling (ms)", Longs.toArray(wpArray)),
+                            LongColumn.create("Internal Scaling (ms)", Longs.toArray(wsArray)),
+                            LongColumn.create("Scaling-out-induced (ms)", Longs.toArray(woArray)),
+                            DoubleColumn.create("Speedup_expr", Doubles.toArray(speedupExprArray)),
+                            DoubleColumn.create("Speedup_ipso", Doubles.toArray(speedupIPSOArray)));
+
+            ipsoSpeedupTable.write().csv(Util.ipsoSpeedupOutputPath(outputPath, "ipso.csv"));
+
+            //Plotting
+            String title = "IPSO Speedup Analysis";
+            String xCol = "N";
+            String yCol = "m";
+            String zCol = "S";
+            Layout layout = Util.standardLayout(title, xCol, yCol, zCol, false);
+            Scatter3DTrace traceSexpr = Scatter3DTrace.builder(ipsoSpeedupTable.numberColumn(xCol), ipsoSpeedupTable.numberColumn(yCol), ipsoSpeedupTable.numberColumn("Speedup_expr")).build();
+            Scatter3DTrace traceSipso = Scatter3DTrace.builder(ipsoSpeedupTable.numberColumn(xCol), ipsoSpeedupTable.numberColumn(yCol), ipsoSpeedupTable.numberColumn("Speedup_ipso")).build();
+            Figure fig = new Figure(layout, new Trace[]{traceSexpr, traceSipso});
+            Plot.show(fig);
+
+        } catch (IOException e) {
+        e.printStackTrace();
+        }
+
     }
 
-    private void output(Long stageID, IPSOStage stage, int N, int m) {
+    public void calcIPSO(int N, int m) {
+        IPSOExprID key = new IPSOExprID(N, m);
+        stages = ipsoStagesHM.get(key);
+        final long duration = ipsoDurationHM.get(key);
+        /* L = T/W ; the W is the workload, here we use N (data size) as the approximation of the workload */
+        final double latency = duration/N;
+        final long overhead = ipsoOverheadHM.get(key);
+        long sumWp = 0;
+        long sumWs = overhead;
+        long sumWo = 0;
+
         //Before output firstly check whether the stages are all tagged
         if(!AppStageTag.getInstance().isReady())
             LOG.error("Missing Spark application profiles: IPSO requires more experiments to start-up its analysis!");
 
-        //TITLE: N | m | stageName | wp | ws | wo
+        /* IPSO option (1): Scaling factors */
+        if(onScalingFactors()) {
+            stages.forEach((k, v) -> output(k, v, N, m));
+        }
+
+        /* IPSO option (2): Speedups */
+        if (onSpeedup()) {
+            if(baseLatencyMS == -1)
+                baseLatencyMS = latency;
+
+                for(IPSOStage stage : stages.values()) {
+                    sumWp += stage.IPSO().wp();
+                    sumWs += stage.IPSO().ws();
+                    sumWo += stage.IPSO().wo();
+                }
+
+                double latencyIPSO = latencyIPSO(sumWs, sumWp, sumWo, N, m);
+                if(baseLatencyIPSOMS == -1)
+                    baseLatencyIPSOMS = latencyIPSO;
+
+                NArray.add(N);
+                mArray.add(m);
+                latencyExprArray.add(latency);
+                latencyIPSOArray.add(latencyIPSO);
+                wpArray.add(sumWp);
+                wsArray.add(sumWs);
+                woArray.add(sumWo);
+                speedupExprArray.add(speedup(baseLatencyMS, latency));
+                speedupIPSOArray.add(speedup(baseLatencyIPSOMS, latencyIPSO));
+
+        }
+    }
+
+    //IPSO latency (similar to expr latency definition)
+    private double latencyIPSO(long ws, long wp, long wo, int N, int m) {
+        return (ws + wp/m + wo)/N;
+    }
+    //Speedup definition from wikipedia: https://en.wikipedia.org/wiki/Speedup
+    private double speedup(double baseLatency, double latency) {
+        return baseLatency/latency;
+    }
+
+
+    private void output(Long stageID, IPSOStage stage, int N, int m) {
+        //TITLE: | N | m | stageName | wp | ws | wo | type |
         String outString = "";
 
         try {
-                Path fpath=Paths.get(Util.getIpsoOutputPath(outputPath, stage.getStageName()));
+                Path fpath=Paths.get(Util.ipsoScalingFactorOutputPath(outputPath, stage.getStageName()));
                 if(!Files.exists(fpath)) {
                     Files.createFile(fpath);
-                    outString += "N | m | duration(ms) | stageName | wp | ws | wo\n";
+                    outString += "| N | m | duration(ms) | stageName | wp | ws | wo | type |\n";
                 }
 
                 outString +=
-                        N + " | " + m + " | " +
+                        "| " + N + " | " + m + " | " +
                                 stage.getDurationInMS() + " | " +
                                 stage.getStageName() + " | " +
                                 stage.IPSO().wp() + " | " +
                                 stage.IPSO().ws() + " | " +
-                                stage.IPSO().wo() + "\n";
+                                stage.IPSO().wo() + " | " +
+                                stage.stageType() + " | " +
+                                "\n";
 
 
                 BufferedWriter bfw=Files.newBufferedWriter(fpath, StandardCharsets.UTF_8, StandardOpenOption.APPEND);
@@ -318,7 +455,7 @@ public class SparkEventLogInterpreter {
 //				stages.put(stageInfo.getStageID(), new IPSOStage(stageInfo.getStageID(), stage));
                 long stageID = stage.getID();
                 if(stages.size() == 0 || !stages.containsKey(stageID)) {
-                    stages.put(stageID, new IPSOStage(stageID));
+                    stages.put(stageID, new IPSOStage(stageID, IPSOExprConfig.getInstance().NP(), IPSOExprConfig.getInstance().MP()));
                 }
 
                 try {
@@ -363,7 +500,7 @@ public class SparkEventLogInterpreter {
             if(ipsoAnalysis) {
                 Long stageIDForTheTask = Long.valueOf(taskMetrics.getStageID());
                 if(stages.size() == 0 || !stages.containsKey(stageIDForTheTask)) {
-                    stages.put(stageIDForTheTask, new IPSOStage(stageIDForTheTask));
+                    stages.put(stageIDForTheTask, new IPSOStage(stageIDForTheTask, IPSOExprConfig.getInstance().NP(), IPSOExprConfig.getInstance().MP()));
                 }
 
                 try {
@@ -425,34 +562,5 @@ public class SparkEventLogInterpreter {
         }
 
         return comptL;
-    }
-
-    private class IPSOkey {
-        int N;
-        int m;
-
-        IPSOkey(int pN, int pm) {
-             N = pN;
-             m = pm;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if(this == o) return true;
-            if(o == null || getClass() != o.getClass()) return false;
-            IPSOkey key = (IPSOkey) o;
-            if(N != key.N) return false;
-            if(m != key.m) return false;
-            return true;
-        }
-
-        @Override
-        public int hashCode() {
-            final int prime = 31;
-            int result = 1;
-            result = result * prime + N;
-            result = result * prime + m;
-            return result;
-        }
     }
 }

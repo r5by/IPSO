@@ -22,6 +22,9 @@ public class IPSOStage {
 
 	/* stage metrics */
 	private StageMetrics stageInfo;
+
+	private int N;
+	private int m;
 	
 	/* List of tasks in the stage */
 	private ArrayList<TaskMetricsInStage> taskInfo = new ArrayList<TaskMetricsInStage>();
@@ -35,8 +38,10 @@ public class IPSOStage {
 	//===============================
 	//       Constructors	
 	//================================
-	public IPSOStage(long id) {
+	public IPSOStage(long id, int N, int m) {
 		this.id = id;
+		this.N = N;
+		this.m = m;
 	} //NOTE: id for a stage is only used locally
 	
 	//===============================
@@ -83,20 +88,16 @@ public class IPSOStage {
 	 */
 	public IPSOStageTypes stageType() {
 		long numOfTasks = numOfTasks();
-		long NP = IPSOExprConfig.getInstance().NP();
-		long MP = IPSOExprConfig.getInstance().MP();
-		
-		if( NP == 1 || NP == MP)
-			type = IPSOStageTypes.UNSET;
-		else {
-			if(numOfTasks == NP )
+
+		if(type == IPSOStageTypes.UNSET && N != 1 && N != m) {
+			if(numOfTasks == N )
 				type = IPSOStageTypes.NTYPE;
 			else if(numOfTasks == 1)
 				type = IPSOStageTypes.STYPE;
 			else
 				type = IPSOStageTypes.MTYPE;
 		}
-		
+
 		return type;
 	}
 
@@ -130,10 +131,15 @@ public class IPSOStage {
 				wo += stageInfo.durationMS();
 			} else {
 				LOG.debug("Getting IPSO stage type informatino for stage: " + getStageKey());
-				switch (AppStageTag.getInstance().get(getStageKey())) {
+				IPSOStageTypes newType = AppStageTag.getInstance().get(getStageKey());
+
+				if(newType != stageType())
+					type = newType;
+
+				switch (type) {
 					case NTYPE:
 						/*when number of tasks in stage is equal to N*/
-						wp = stageInfo.durationMS();
+						wp = stageInfo.durationMS() * m;
 						LOG.debug("The stage: " + getStageKey() + " is IPSO_N Type: Wp +=" + wp + " (ms)");
 
 						//TODO: Improve to the task-level granularity implementation in future release
@@ -176,12 +182,12 @@ public class IPSOStage {
 						break;
 					case MTYPE:
 						//When number of tasks are related to available executors
-						if(IPSOExprConfig.getInstance().MP() == 1) { //If m=1, Wo is always 0.
+						if(m == 1) { //If m=1, Wo is always 0.
 							wo = 0;
-							wp = stageInfo.durationMS();
+							wp = stageInfo.durationMS() * m;
 						} else {
 							wp = stageInfo.getComputingTime();
-							wo = stageInfo.durationMS() - wp/IPSOExprConfig.getInstance().MP();
+							wo = stageInfo.durationMS() - wp/m;
 						}
 						LOG.debug("The stage: " + getStageKey() + " is IPSO_M type: Wo += " + wo + "(ms); Wp += " + wp + "(ms)");
 
@@ -199,15 +205,15 @@ public class IPSOStage {
 			}
 		}
 		
-		public double wp() {
+		public long wp() {
 			return wp;
 		}
 		
-		public double ws() {
+		public long ws() {
 			return ws;
 		}
 		
-		public double wo() {
+		public long wo() {
 			return wo;
 		}
 	}
