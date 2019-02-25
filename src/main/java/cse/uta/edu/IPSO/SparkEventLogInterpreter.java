@@ -79,6 +79,7 @@ public class SparkEventLogInterpreter {
     private boolean ipsoAnalysisScalingFactors;
     /* Write out speedups */
     private boolean ipsoAnalysisSpeedup;
+    private boolean ipsoAnalysisPlotting;
 
     /* use the first log file in the log event directory to speedup IPSO analysis */
     private boolean quickAnalysis;
@@ -90,6 +91,9 @@ public class SparkEventLogInterpreter {
     /* baseline: the latency and ipso-speedup of the first profile will be used as baseline to compare the system speedups (for fixed-time) */
     private double baseLatencyMS;
     private double baseLatencyIPSOMS;
+    /* baseline: the workload, taken from base expr sets: N=m=1 */
+    private double baselineWs;
+    private double baselineWp;
 
     /* If isBatch is off, the experiment configuration N/m must be obtained from configuration file */
     private int N;
@@ -101,6 +105,7 @@ public class SparkEventLogInterpreter {
         ipsoAnalysis = conf.getBoolean(IPSOConfig.IPSO_ANALYSIS, false);
         ipsoAnalysisScalingFactors = conf.getBoolean(IPSOConfig.IPSO_ANALYSIS_SCALING_FACTORS, false);
         ipsoAnalysisSpeedup = conf.getBoolean(IPSOConfig.IPSO_ANALYSIS_SPEEDUP, false);
+        ipsoAnalysisPlotting = conf.getBoolean(IPSOConfig.IPSO_ANALYSIS_PLOTTING, false);
 
         isBatch = conf.getBoolean(IPSOConfig.BATCH_PROC, false);
         batchConfigPath = conf.getString(IPSOConfig.BATCH_CONF_PATH);
@@ -305,15 +310,17 @@ public class SparkEventLogInterpreter {
             ipsoSpeedupTable.write().csv(Util.ipsoSpeedupOutputPath(outputPath, "ipso.csv"));
 
             //Plotting
-            String title = "IPSO Speedup Analysis";
-            String xCol = "N";
-            String yCol = "m";
-            String zCol = "S";
-            Layout layout = Util.standardLayout(title, xCol, yCol, zCol, false);
-            Scatter3DTrace traceSexpr = Scatter3DTrace.builder(ipsoSpeedupTable.numberColumn(xCol), ipsoSpeedupTable.numberColumn(yCol), ipsoSpeedupTable.numberColumn("Speedup_expr")).build();
-            Scatter3DTrace traceSipso = Scatter3DTrace.builder(ipsoSpeedupTable.numberColumn(xCol), ipsoSpeedupTable.numberColumn(yCol), ipsoSpeedupTable.numberColumn("Speedup_ipso")).build();
-            Figure fig = new Figure(layout, new Trace[]{traceSexpr, traceSipso});
-            Plot.show(fig);
+            if (ipsoAnalysisPlotting) {
+                String title = "IPSO Speedup Analysis";
+                String xCol = "N";
+                String yCol = "m";
+                String zCol = "S";
+                Layout layout = Util.standardLayout(title, xCol, yCol, zCol, true);
+                Scatter3DTrace traceSexpr = Scatter3DTrace.builder(ipsoSpeedupTable.numberColumn(xCol), ipsoSpeedupTable.numberColumn(yCol), ipsoSpeedupTable.numberColumn("Speedup_expr")).build();
+                Scatter3DTrace traceSipso = Scatter3DTrace.builder(ipsoSpeedupTable.numberColumn(xCol), ipsoSpeedupTable.numberColumn(yCol), ipsoSpeedupTable.numberColumn("Speedup_ipso")).build();
+                Figure fig = new Figure(layout, new Trace[]{traceSexpr, traceSipso});
+                Plot.show(fig);
+            }
 
         } catch (IOException e) {
         e.printStackTrace();
@@ -325,8 +332,6 @@ public class SparkEventLogInterpreter {
         IPSOExprID key = new IPSOExprID(N, m);
         stages = ipsoStagesHM.get(key);
         final long duration = ipsoDurationHM.get(key);
-        /* L = T/W ; the W is the workload, here we use N (data size) as the approximation of the workload */
-        final double latency = duration/N;
         final long overhead = ipsoOverheadHM.get(key);
         long sumWp = 0;
         long sumWs = overhead;
@@ -343,35 +348,45 @@ public class SparkEventLogInterpreter {
 
         /* IPSO option (2): Speedups */
         if (onSpeedup()) {
-            if(baseLatencyMS == -1)
+
+            for (IPSOStage stage : stages.values()) {
+                sumWp += stage.IPSO().wp();
+                sumWs += stage.IPSO().ws();
+                sumWo += stage.IPSO().wo();
+            }
+
+            if (N == 1 && m == 1) {
+                baselineWs = sumWs;
+                baselineWp = sumWp;
+            }
+
+            /* L = T/W ; the W is the workload, in IPSO model, we use IN(n)==1, EX(n)==N, thus Ws(1)* IN(n) + Wp(1) * EX(n) as the approximation of the workload */
+            double workload = baselineWs + N * baselineWp;
+            double latency = duration / workload;
+
+            if (baseLatencyMS == -1)
                 baseLatencyMS = latency;
 
-                for(IPSOStage stage : stages.values()) {
-                    sumWp += stage.IPSO().wp();
-                    sumWs += stage.IPSO().ws();
-                    sumWo += stage.IPSO().wo();
-                }
+            double latencyIPSO = latencyIPSO(sumWs, sumWp, sumWo, N, m);
+            if (baseLatencyIPSOMS == -1)
+                baseLatencyIPSOMS = latencyIPSO;
 
-                double latencyIPSO = latencyIPSO(sumWs, sumWp, sumWo, N, m);
-                if(baseLatencyIPSOMS == -1)
-                    baseLatencyIPSOMS = latencyIPSO;
-
-                NArray.add(N);
-                mArray.add(m);
-                latencyExprArray.add(latency);
-                latencyIPSOArray.add(latencyIPSO);
-                wpArray.add(sumWp);
-                wsArray.add(sumWs);
-                woArray.add(sumWo);
-                speedupExprArray.add(speedup(baseLatencyMS, latency));
-                speedupIPSOArray.add(speedup(baseLatencyIPSOMS, latencyIPSO));
+            NArray.add(N);
+            mArray.add(m);
+            latencyExprArray.add(latency);
+            latencyIPSOArray.add(latencyIPSO);
+            wpArray.add(sumWp);
+            wsArray.add(sumWs);
+            woArray.add(sumWo);
+            speedupExprArray.add(speedup(baseLatencyMS, latency));
+            speedupIPSOArray.add(speedup(baseLatencyIPSOMS, latencyIPSO));
 
         }
     }
 
     //IPSO latency (similar to expr latency definition)
     private double latencyIPSO(long ws, long wp, long wo, int N, int m) {
-        return (ws + wp/m + wo)/N;
+        return (ws + wp/m + wo)/(baselineWs + N * baselineWp);
     }
     //Speedup definition from wikipedia: https://en.wikipedia.org/wiki/Speedup
     private double speedup(double baseLatency, double latency) {
