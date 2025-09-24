@@ -9,8 +9,9 @@ import cse.uta.edu.Utils.IPSOConfig;
 import cse.uta.edu.Utils.LongDeserializer;
 import cse.uta.edu.Utils.Util;
 import cse.uta.edu.model.*;
-import org.apache.commons.configuration.Configuration;
-import org.apache.log4j.Logger;
+import org.apache.commons.configuration2.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tech.tablesaw.api.*;
 import tech.tablesaw.columns.Column;
 import tech.tablesaw.plotly.Plot;
@@ -20,7 +21,6 @@ import tech.tablesaw.plotly.components.Layout;
 import tech.tablesaw.plotly.traces.Scatter3DTrace;
 import tech.tablesaw.plotly.traces.Trace;
 
-import javax.naming.directory.InvalidAttributesException;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class SparkEventLogInterpreter {
-    private static final Logger LOG = Logger.getLogger(SparkEventLogInterpreter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(SparkEventLogInterpreter.class);
     //===============================
     //       Config.
     //================================
@@ -199,7 +199,7 @@ public class SparkEventLogInterpreter {
         stages.clear();
 
         //Print out the log file location
-        LOG.debug(path);
+        LOG.debug("Processing log file: {}", path);
 
         List<String> logList = new ArrayList<>();
 
@@ -322,8 +322,9 @@ public class SparkEventLogInterpreter {
                 Plot.show(fig);
             }
 
-        } catch (IOException e) {
-        e.printStackTrace();
+        } catch (Exception e) {
+            LOG.error("Error outputting IPSO analysis", e);
+            e.printStackTrace();
         }
 
     }
@@ -475,7 +476,7 @@ public class SparkEventLogInterpreter {
 
                 try {
                     stages.get(stageID).addStageInfo(stage);
-                } catch (InvalidAttributesException e) {
+                } catch (IllegalArgumentException e) {
                     e.printStackTrace();
                 }
 
@@ -520,7 +521,7 @@ public class SparkEventLogInterpreter {
 
                 try {
                     stages.get(stageIDForTheTask).addTaskInfo(taskMetrics);
-                } catch (InvalidAttributesException e) {
+                } catch (IllegalArgumentException e) {
                     // TODO Auto-generated catch block
                     e.printStackTrace();
                 }

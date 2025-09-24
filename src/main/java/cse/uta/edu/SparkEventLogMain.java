@@ -14,12 +14,11 @@ import java.util.stream.Stream;
 import cse.uta.edu.IPSO.SparkEventLogInterpreter;
 import cse.uta.edu.Utils.IPSOConfig;
 import org.apache.commons.cli.*;
-import org.apache.commons.configuration.Configuration;
-import org.apache.commons.configuration.ConfigurationException;
-import org.apache.commons.configuration.PropertiesConfiguration;
-import org.apache.log4j.BasicConfigurator;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.commons.configuration2.Configuration;
+import org.apache.commons.configuration2.builder.fluent.Configurations;
+import org.apache.commons.configuration2.ex.ConfigurationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * @author ruby
@@ -29,14 +28,12 @@ import org.apache.log4j.Logger;
  *
  */
 public class SparkEventLogMain {
-	private static final Logger LOG = Logger.getLogger(SparkEventLogMain.class);
+	private static final Logger LOG = LoggerFactory.getLogger(SparkEventLogMain.class);
 
     //===============================
     //       Entry.
     //================================
 	public static void main(String[] args) {
-		BasicConfigurator.configure();
-
         Options options = new Options();
         Option opt = new Option("c",true, "Configuration file (required) is missing");
         opt.setRequired(true);
@@ -48,11 +45,12 @@ public class SparkEventLogMain {
         try {
             CommandLine cmd = parser.parse(options, args);
             String configFile = cmd.getOptionValue("c");
-            Configuration conf = new PropertiesConfiguration(configFile);
 
-            Level logLevel = Level.toLevel(conf.getString(IPSOConfig.LOG_LEVEL, ""),
-                    IPSOConfig.DEFAULT_LOG_LEVEL);
-            Logger.getRootLogger().setLevel(logLevel);
+            Configurations configs = new Configurations();
+            Configuration conf = configs.properties(configFile);
+
+            // Note: Logback configuration is now handled via logback.xml
+            // Log level configuration from properties file is no longer used
 
             interpreter.init(conf);
         } catch (ParseException e) {

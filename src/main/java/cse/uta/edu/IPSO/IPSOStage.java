@@ -1,11 +1,11 @@
 package cse.uta.edu.IPSO;
 
 import cse.uta.edu.Utils.Util;
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 
-import javax.naming.directory.InvalidAttributesException;
 
 /**
  * IPSO identified stages, with Wp, Ws and Wo properties
@@ -13,7 +13,7 @@ import javax.naming.directory.InvalidAttributesException;
  *
  */
 public class IPSOStage {
-	private static final Logger LOG = Logger.getLogger(IPSOStage.class);
+	private static final Logger LOG = LoggerFactory.getLogger(IPSOStage.class);
 	//===============================
 	//      Fileds
 	//================================
@@ -226,17 +226,17 @@ public class IPSOStage {
 		return id;
 	}
 
-	public void addTaskInfo(TaskMetricsInStage pTask) throws InvalidAttributesException {
+	public void addTaskInfo(TaskMetricsInStage pTask) throws IllegalArgumentException {
 		if(pTask.getStageID() != id)
-			throw new InvalidAttributesException("Task doesn't belong to the stage.");
-		
+			throw new IllegalArgumentException("Task doesn't belong to the stage.");
+
 		taskInfo.add(pTask);
 	}
-	
-	public void addStageInfo(StageMetrics pInfo) throws InvalidAttributesException {
+
+	public void addStageInfo(StageMetrics pInfo) throws IllegalArgumentException {
 		if(pInfo.getID() != id)
-			throw new InvalidAttributesException("Stage info doesn't match the stage.");
-		
+			throw new IllegalArgumentException("Stage info doesn't match the stage.");
+
 		this.stageInfo = pInfo;
 	}
 }

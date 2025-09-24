@@ -1,11 +1,9 @@
 package cse.uta.edu.Utils;
 
-import org.apache.log4j.Level;
-
 public class IPSOConfig {
-    // Values: "debug", "info", "warn", "error", "fatal"
+    // Note: Log level is now configured via logback.xml instead of properties file
+    // Legacy LOG_LEVEL property is preserved for backwards compatibility but not used
     public final static String LOG_LEVEL = "log.level";
-    public final static Level DEFAULT_LOG_LEVEL = Level.DEBUG;
 
     /** The root directory of all N-m sets of Spark job log profiles
      * e.g. A typical Spark log files tree structure for IPSO is:
