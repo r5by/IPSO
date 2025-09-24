@@ -16,6 +16,8 @@ IPSO requires the following software packages for development:
 * JDK 8+
 * [Maven](https://maven.apache.org/).
 
+> Now support Java 21 Runtime
+
 
 ## Getting started
 
